@@ -1,104 +1,75 @@
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('ai-redraft-form');
-    const resultDiv = document.getElementById('ai-redraft-result');
-    const saveButton = document.getElementById('ai-save-post');
-
-    if (!form) {
-        console.error('AI Redraft form not found. Ensure the form ID is correct.');
-        return;
-    }
-
-    form.addEventListener('submit', function(e) {
-        e.preventDefault();
-
-        const postId = document.getElementById('post_id').value;
-        const prompt = document.getElementById('prompt').value;
-        const style = document.getElementById('style').value;
-
-        resultDiv.innerHTML = '<p>Loading...</p>';
-
-        fetch(aiRedraft.ajax_url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-            },
-            body: new URLSearchParams({
-                action: 'ai_redraft_request',
-                post_id: postId,
-                prompt: prompt,
-                style: style,
-                _ajax_nonce: aiRedraft.nonce
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                const aiContent = data.data.ai;
-                const originalContent = data.data.original;
-
-                let diffOutput = '';
-
-                if (typeof Diff !== 'undefined' && Diff.createTwoFilesPatch) {
-                    try {
-                        diffOutput = Diff.createTwoFilesPatch('Original', 'AI Redraft', originalContent, aiContent);
-                        diffOutput = `<pre>${diffOutput}</pre>`;
-                    } catch (err) {
-                        console.error('Diff error:', err);
-                        diffOutput = '<p>Diff failed to generate. Displaying AI content only.</p><pre>' + aiContent + '</pre>';
-                    }
-                } else {
-                    console.warn('Diff library not loaded. Displaying AI content only.');
-                    diffOutput = '<pre>' + aiContent + '</pre>';
-                }
-
-                resultDiv.innerHTML = '<h3>AI Redraft Output:</h3>' + diffOutput;
-
-                // Show the save button
-                saveButton.style.display = 'inline-block';
-
-                // Store the AI content and post ID for saving
-                form.dataset.redraft = aiContent;
-                form.dataset.postId = postId;
-            } else {
-                resultDiv.innerHTML = '<p>Error: ' + data.data + '</p>';
-            }
-        })
-        .catch(error => {
-            resultDiv.innerHTML = '<p>Unexpected error occurred.</p>';
-            console.error('Error:', error);
-        });
-    });
-
-    saveButton.addEventListener('click', function() {
-        const redraft = form.dataset.redraft;
-        const postId = form.dataset.postId;
-
-        if (!redraft || !postId) {
-            resultDiv.innerHTML += '<p style="color: red;">No content to save.</p>';
+jQuery(document).ready(function($) {
+    $('#ai_redraft_button').on('click', function() {
+        var content;
+        // Classic Editor
+        if ($('#content').length) {
+            content = $('#content').val();
+        } 
+        // Gutenberg Block Editor
+        else if (typeof wp !== 'undefined' && wp.data) {
+            content = wp.data.select('core/editor').getEditedPostContent();
+        } else {
+            $('#ai_redraft_result').html('<div style="color:red;">Could not detect editor.</div>');
             return;
         }
 
-        resultDiv.innerHTML += '<p>Saving...</p>';
+        var prompt = $('#ai_redraft_prompt').val();
+        var style = $('#ai_redraft_style').val();
 
-        fetch(aiRedraft.ajax_url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-            },
-            body: new URLSearchParams({
-                action: 'ai_save_post',
-                post_id: postId,
-                redraft: redraft,
-                _ajax_nonce: aiRedraft.nonce
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                resultDiv.innerHTML += '<p style="color: green;">Post updated successfully!</p>';
+        $('#ai_redraft_result').html('<em>Redrafting... Please wait.</em>');
+
+        $.post(aiRedraft.ajax_url, {
+            action: 'ai_redraft_request',
+            nonce: aiRedraft.nonce,
+            content: content,
+            prompt: prompt,
+            style: style
+        }, function(response) {
+            if (response.success) {
+                $('#ai_redraft_result').html(
+                    '<textarea id="ai_redraft_output" style="width:100%;min-height:150px;">' + 
+                    response.data.result + '</textarea>'
+                );
+                $('#ai_replace_content').show();
             } else {
-                resultDiv.innerHTML += '<p style="color: red;">Error: ' + data.data + '</p>';
+                $('#ai_redraft_result').html(
+                    '<span style="color:red;">Error: ' + 
+                    (response.data && response.data.error ? response.data.error : 'Unknown error') + 
+                    '</span>'
+                );
             }
         });
+    });
+
+    $('#ai_replace_content').on('click', function() {
+        var ai_content = $('#ai_redraft_output').val();
+
+        // Gutenberg: Use blocks API if available and blocks API is present
+        if (
+            typeof wp !== 'undefined' &&
+            wp.data &&
+            wp.blocks &&
+            wp.data.dispatch('core/block-editor').resetBlocks
+        ) {
+            // If not valid HTML, wrap in paragraphs
+            if (!/^<([a-z][a-z0-9]*)\b[^>]*>/i.test(ai_content.trim())) {
+                ai_content = '<p>' + ai_content.trim().replace(/\n+/g, '</p><p>') + '</p>';
+            }
+            // Parse HTML into blocks
+            const blocks = wp.blocks.parse(ai_content);
+            // Replace all blocks in the editor
+            wp.data.dispatch('core/block-editor').resetBlocks(blocks);
+            $('#ai_redraft_result').html('<span style="color:green;">Block editor post content replaced!</span>');
+        }
+        // Classic Editor textarea
+        else if ($('#content').length) {
+            $('#content').val(ai_content);
+            $('#ai_redraft_result').html('<span style="color:green;">Classic editor post content replaced!</span>');
+        }
+        else {
+            $('#ai_redraft_result').html('<span style="color:red;">Could not update post content (no compatible editor found).</span>');
+        }
+
+        $(this).hide();
     });
 });

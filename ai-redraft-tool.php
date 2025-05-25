@@ -2,11 +2,12 @@
 /*
 Plugin Name: AI Redraft Tool
 Description: A simple, powerful WordPress plugin for AI-powered content rewriting and diffing.
-Version: 1.0
+Version: 1.1
 Author: Adam Bevington
 */
 
-// Add settings page to WordPress admin
+// ========== SETTINGS PAGE (for API Key) ==========
+
 function ai_redraft_menu() {
     add_options_page(
         'AI Redraft Tool Settings',
@@ -18,7 +19,6 @@ function ai_redraft_menu() {
 }
 add_action('admin_menu', 'ai_redraft_menu');
 
-// Settings page content
 function ai_redraft_settings_page() {
     ?>
     <div class="wrap">
@@ -34,9 +34,7 @@ function ai_redraft_settings_page() {
     <?php
 }
 
-// Register plugin settings
 function ai_redraft_settings_init() {
-    register_setting('ai_redraft_settings', 'ai_redraft_message');
     register_setting('ai_redraft_settings', 'ai_redraft_api_key');
 
     add_settings_section(
@@ -44,17 +42,6 @@ function ai_redraft_settings_init() {
         'AI Redraft Settings',
         null,
         'ai-redraft-settings'
-    );
-
-    add_settings_field(
-        'ai_redraft_message_field',
-        'Custom Message',
-        function() {
-            $message = get_option('ai_redraft_message', '');
-            echo '<input type="text" name="ai_redraft_message" value="' . esc_attr($message) . '" size="50">';
-        },
-        'ai-redraft-settings',
-        'ai_redraft_section'
     );
 
     add_settings_field(
@@ -70,167 +57,107 @@ function ai_redraft_settings_init() {
 }
 add_action('admin_init', 'ai_redraft_settings_init');
 
-// Add AI Redraft Tool (post redraft form) to admin menu
-function ai_redraft_tool_menu() {
-    add_menu_page(
+// ========== META BOX ON POST/PAGE EDITOR ==========
+
+function ai_redraft_add_meta_box() {
+    add_meta_box(
+        'ai_redraft_box_post',
         'AI Redraft Tool',
-        'AI Redraft',
-        'manage_options',
-        'ai-redraft-tool',
-        'ai_redraft_tool_page',
-        'dashicons-edit',
-        20
+        'ai_redraft_meta_box_html',
+        'post',
+        'normal', // or 'advanced'
+        'high'
+    );
+    add_meta_box(
+        'ai_redraft_box_page',
+        'AI Redraft Tool',
+        'ai_redraft_meta_box_html',
+        'page',
+        'normal', // or 'advanced'
+        'high'
     );
 }
-add_action('admin_menu', 'ai_redraft_tool_menu');
+add_action('add_meta_boxes', 'ai_redraft_add_meta_box');
 
-// Page content for the AI Redraft Tool (post redraft form)
-function ai_redraft_tool_page() {
+function ai_redraft_meta_box_html($post) {
     ?>
-    <div class="wrap">
-        <h1>AI Redraft Tool</h1>
-        <form id="ai-redraft-form">
-            <label for="post_id">Post ID:</label>
-            <input type="number" id="post_id" name="post_id" required>
+    <label for="ai_redraft_prompt">Prompt:</label>
+    <input type="text" id="ai_redraft_prompt" name="ai_redraft_prompt" style="width:100%;" value="Rewrite this content" />
 
-            <label for="prompt">Redraft Prompt (optional):</label>
-            <input type="text" id="prompt" name="prompt" placeholder="e.g., make it more friendly">
+    <label for="ai_redraft_style" style="margin-top:8px; display:block;">Style:</label>
+    <select id="ai_redraft_style" name="ai_redraft_style" style="width:100%;">
+        <option value="GDS">GDS Style</option>
+        <option value="SEO">SEO Optimised</option>
+        <option value="Plain English">Plain English</option>
+    </select>
 
-            <label for="style">Choose Rewrite Style:</label>
-            <select id="style" name="style">
-                <option value="gds">GDS Style (UK Government)</option>
-                <option value="friendly">Friendly Tone</option>
-                <option value="formal">Formal/Professional</option>
-                <option value="seo">SEO Optimised</option>
-                <option value="translate">Translate to Spanish</option>
-                <option value="shorten">Shorten Content</option>
-                <option value="summarise">Summarise Content</option>
-            </select>
+    <button type="button" class="button button-primary" id="ai_redraft_button" style="margin-top:8px;width:100%;">Redraft Content</button>
 
-            <button type="submit" class="button button-primary">Send to ChatGPT</button>
-        </form>
+    <div id="ai_redraft_result" style="margin-top:10px;"></div>
 
-        <div id="ai-redraft-result" style="margin-top: 20px;"></div>
-        <button id="ai-save-post" class="button button-secondary" style="display: none; margin-top: 10px;">Save to Post</button>
-    </div>
+    <button type="button" class="button" id="ai_replace_content" style="margin-top:8px;width:100%;display:none;">Replace Post Content</button>
     <?php
 }
 
-// Enqueue scripts for the AI Redraft Tool page only
-function ai_redraft_scripts($hook) {
-    if ($hook !== 'toplevel_page_ai-redraft-tool') return;
+// ========== ENQUEUE JS FOR POST/PAGE EDITOR ==========
 
-    wp_enqueue_script('diff-lib', 'https://cdnjs.cloudflare.com/ajax/libs/diff/5.1.0/diff.min.js', array(), '5.1.0', true);
-    wp_enqueue_script('ai-redraft-tool-js', plugin_dir_url(__FILE__) . 'ai-redraft-tool.js', array('diff-lib'), '1.0', true);
-
-    wp_localize_script('ai-redraft-tool-js', 'aiRedraft', array(
-        'ajax_url' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('ai_redraft_nonce'),
-    ));
+function ai_redraft_enqueue_scripts($hook) {
+    if ($hook === 'post.php' || $hook === 'post-new.php') {
+        wp_enqueue_script('ai-redraft-js', plugin_dir_url(__FILE__) . 'ai-redraft-tool.js', array('jquery'), '1.1', true);
+        wp_localize_script('ai-redraft-js', 'aiRedraft', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce'    => wp_create_nonce('ai_redraft_nonce')
+        ));
+    }
 }
-add_action('admin_enqueue_scripts', 'ai_redraft_scripts');
+add_action('admin_enqueue_scripts', 'ai_redraft_enqueue_scripts');
 
-// Handle AI Redraft AJAX request
-function ai_redraft_request() {
-    check_ajax_referer('ai_redraft_nonce');
+// ========== AJAX HANDLER FOR AI REDRAFT ==========
 
-    $post_id = intval($_POST['post_id']);
+add_action('wp_ajax_ai_redraft_request', 'ai_redraft_handle_ajax');
+
+function ai_redraft_handle_ajax() {
+    check_ajax_referer('ai_redraft_nonce', 'nonce');
+
+    $content = sanitize_text_field($_POST['content']);
     $prompt = sanitize_text_field($_POST['prompt']);
     $style = sanitize_text_field($_POST['style']);
 
-    $post = get_post($post_id);
-    if (!$post) {
-        wp_send_json_error('Invalid post ID');
-    }
-
-    $content = $post->post_content;
-
-    $style_prompt = '';
-    switch ($style) {
-        case 'gds':
-            $style_prompt = "Rewrite the content in plain English, following the UK Government Digital Service (GDS) Style Guide: short sentences, active voice, no jargon, no unnecessary words. Ensure accessibility and clarity.";
-            break;
-        case 'friendly':
-            $style_prompt = "Rewrite the content in a friendly, conversational tone.";
-            break;
-        case 'formal':
-            $style_prompt = "Rewrite the content in a formal, professional tone.";
-            break;
-        case 'seo':
-            $style_prompt = "Optimise the content for SEO with natural keyword usage.";
-            break;
-        case 'translate':
-            $style_prompt = "Translate the content into Spanish.";
-            break;
-        case 'shorten':
-            $style_prompt = "Shorten the content while preserving key points.";
-            break;
-        case 'summarise':
-            $style_prompt = "Summarise the content concisely.";
-            break;
-        default:
-            $style_prompt = "Rewrite the content clearly.";
-    }
-
-    $full_prompt = $style_prompt . "\n\nAdditional instructions: " . $prompt . "\n\nContent:\n" . $content;
-
-    $api_key = get_option('ai_redraft_api_key', '');
+    $api_key = get_option('ai_redraft_api_key');
     if (empty($api_key)) {
-        wp_send_json_error('API key not set. Please add it in the plugin settings.');
+        wp_send_json_error(array('error' => 'API key not set. Add it in plugin settings.'));
     }
 
-    $response = wp_remote_post('https://api.openai.com/v1/chat/completions', array(
-        'headers' => array(
-            'Authorization' => 'Bearer ' . $api_key,
-            'Content-Type'  => 'application/json',
-        ),
-        'body' => json_encode(array(
-            'model' => 'gpt-3.5-turbo',
-            'messages' => array(
-                array('role' => 'system', 'content' => 'You are a helpful assistant that rewrites content.'),
-                array('role' => 'user', 'content' => $full_prompt),
-            ),
-            'max_tokens' => 500,
-        )),
-        'timeout' => 15,
+    // Compose OpenAI request
+    $endpoint = 'https://api.openai.com/v1/chat/completions';
+    $headers = array(
+        'Authorization' => 'Bearer ' . $api_key,
+        'Content-Type'  => 'application/json',
+    );
+    $messages = array(
+        array('role' => 'system', 'content' => "You are an expert content redrafter. Style: $style."),
+        array('role' => 'user', 'content' => $prompt . "\n\n" . $content)
+    );
+
+    $data = array(
+        'model'    => 'gpt-3.5-turbo',
+        'messages' => $messages,
+        'max_tokens' => 1000,
+    );
+
+    $response = wp_remote_post($endpoint, array(
+        'headers' => $headers,
+        'body'    => json_encode($data),
+        'timeout' => 60,
     ));
 
     if (is_wp_error($response)) {
-        wp_send_json_error('Request failed: ' . $response->get_error_message());
-    }
-
-    $body = json_decode(wp_remote_retrieve_body($response), true);
-
-    if (isset($body['choices'][0]['message']['content'])) {
-        $ai_output = trim($body['choices'][0]['message']['content']);
-        wp_send_json_success(array(
-            'ai' => $ai_output,
-            'original' => $content
-        ));
+        wp_send_json_error(array('error' => 'API request failed.'));
     } else {
-        wp_send_json_error('No response from AI.');
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $ai_content = $body['choices'][0]['message']['content'] ?? '';
+        wp_send_json_success(array('result' => $ai_content));
     }
+    wp_die();
 }
-add_action('wp_ajax_ai_redraft_request', 'ai_redraft_request');
 
-// Save post AJAX
-function ai_redraft_save_post() {
-    check_ajax_referer('ai_redraft_nonce');
-
-    $post_id = intval($_POST['post_id']);
-    $redraft = wp_kses_post($_POST['redraft']);
-
-    $post = array(
-        'ID' => $post_id,
-        'post_content' => $redraft,
-    );
-
-    $result = wp_update_post($post, true);
-
-    if (is_wp_error($result)) {
-        wp_send_json_error('Failed to update post: ' . $result->get_error_message());
-    } else {
-        wp_send_json_success('Post updated!');
-    }
-}
-add_action('wp_ajax_ai_save_post', 'ai_redraft_save_post');
